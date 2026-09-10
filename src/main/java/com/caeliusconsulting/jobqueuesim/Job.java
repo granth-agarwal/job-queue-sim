@@ -3,8 +3,8 @@ package com.caeliusconsulting.jobqueuesim;
 import com.caeliusconsulting.jobqueuesim.exceptions.JobExecutionException;
 
 public abstract class Job implements Loggable {
-    private String jobId;
-    private long createdAt;
+    private final String jobId;
+    private final long createdAt;
 
     protected Job(String jobId) {
         this.jobId = jobId;

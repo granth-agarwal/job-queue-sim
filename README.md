@@ -43,7 +43,7 @@ src/main/java/com/caeliusconsulting/jobqueuesim/
 ├── Loggable.java                    Logging contract with a default separator
 ├── JobBuilder.java                  Fluent validated job construction
 ├── Worker.java                      Execution, failure handling, counters, and parallel demo
-├── JobType.java                     Supported type constants and validation
+├── JobType.java                     Type-safe supported-job enum
 ├── LogFormatter.java                Single-threaded log and summary formatting
 ├── Main.java                        Executable end-to-end trace
 ├── exceptions/                      Checked execution/retry and unchecked config exceptions
@@ -56,14 +56,10 @@ src/main/java/com/caeliusconsulting/jobqueuesim/
 [Header] Job Queue Simulation
 ---
 [Builder / this] Building three chained job configurations:
-[String Pool] literal == comparison value: false
-[String Equality] literal.equals(comparison value): true
-[Real Branch] EMAIL_JOB is valid: true
-[Real Branch] UNKNOWN_JOB is valid: false
 [Polymorphism] Running EmailJob through a Job reference:
 [timestamp] JOB email-1 :: Sending email to email-1@example.test
 [Checked Exception] Handled retry limit: Maximum retry attempts exceeded
-[Unchecked Exception] Handled invalid config: Job id and valid type are required
+[Unchecked Exception] Handled invalid config: Job id and type are required
 [StringBuilder Summary] Jobs: email-1 | report-1 | sync-1 | retry-1
 [Static Counter] Total attempts processed: 9
 ```

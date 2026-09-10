@@ -1,4 +1,4 @@
-// Reference appendix — demonstrates the major String method categories used elsewhere in this project (see JobType.java, LogFormatter.java for pool-vs-heap and StringBuilder usage in context).
+// Reference appendix — demonstrates String behavior separately from the core pipeline.
 package com.caeliusconsulting.jobqueuesim.appendix;
 
 public final class StringMethodsDemo {
@@ -7,12 +7,20 @@ public final class StringMethodsDemo {
     public static void main(String[] args) {
         String input = args.length > 0 && !args[0].isEmpty() ? args[0] : "Job";
         String searchTerm = args.length > 1 ? args[1] : "report";
+        String referenceValue = args.length > 2
+                ? args[2].intern() : new String("pooled-value");
+        poolAndHeap(referenceValue);
         inspect(input);
         compare(input);
         compare("Queue");
         transform(input);
         splitAndSearch("email,report", searchTerm);
         splitAndSearch("", searchTerm);
+    }
+    private static void poolAndHeap(String comparisonValue) {
+        String pooledValue = "pooled-value";
+        System.out.println("sameReference=" + (pooledValue == comparisonValue)
+                + ", sameValue=" + pooledValue.equals(comparisonValue));
     }
     private static void inspect(String value) {
         System.out.println("length=" + value.length() + ", charAt=" + value.charAt(0));

@@ -15,22 +15,11 @@ public final class Main {
 
         System.out.println("[Builder / this] Building three chained job configurations:");
         Job emailJob = new JobBuilder().setId("email-1")
-                .setType(JobType.EMAIL).setPriority(1).build();
+                .setType(JobType.EMAIL).build();
         Job reportJob = new JobBuilder().setId("report-1")
-                .setType(JobType.REPORT).setPriority(2).build();
+                .setType(JobType.REPORT).build();
         Job dataSyncJob = new JobBuilder().setId("sync-1")
-                .setType(JobType.DATA_SYNC).setPriority(3).build();
-
-        String comparisonValue = args.length == 0
-                ? JobType.EMAIL_HEAP_COPY : args[0].intern();
-        System.out.println("[String Pool] literal == comparison value: "
-                + (JobType.EMAIL == comparisonValue));
-        System.out.println("[String Equality] literal.equals(comparison value): "
-                + JobType.EMAIL.equals(comparisonValue));
-        System.out.println("[Real Branch] EMAIL_JOB is valid: "
-                + JobType.isValidType(JobType.EMAIL));
-        System.out.println("[Real Branch] UNKNOWN_JOB is valid: "
-                + JobType.isValidType("UNKNOWN_JOB"));
+                .setType(JobType.DATA_SYNC).build();
 
         Worker worker = new Worker();
         System.out.println("[Polymorphism] Running EmailJob through a Job reference:");
