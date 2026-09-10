@@ -21,10 +21,16 @@ public final class Main {
         Job dataSyncJob = new JobBuilder().setId("sync-1")
                 .setType(JobType.DATA_SYNC).setPriority(3).build();
 
-        System.out.println("[String Pool] literal == heap copy: "
-                + (JobType.EMAIL == JobType.EMAIL_HEAP_COPY) + " (false: different references)");
-        System.out.println("[String Equality] literal.equals(heap copy): "
-                + JobType.EMAIL.equals(JobType.EMAIL_HEAP_COPY) + " (true: equal values)");
+        String comparisonValue = args.length == 0
+                ? JobType.EMAIL_HEAP_COPY : args[0].intern();
+        System.out.println("[String Pool] literal == comparison value: "
+                + (JobType.EMAIL == comparisonValue));
+        System.out.println("[String Equality] literal.equals(comparison value): "
+                + JobType.EMAIL.equals(comparisonValue));
+        System.out.println("[Real Branch] EMAIL_JOB is valid: "
+                + JobType.isValidType(JobType.EMAIL));
+        System.out.println("[Real Branch] UNKNOWN_JOB is valid: "
+                + JobType.isValidType("UNKNOWN_JOB"));
 
         Worker worker = new Worker();
         System.out.println("[Polymorphism] Running EmailJob through a Job reference:");
