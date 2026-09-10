@@ -4,12 +4,10 @@ import com.caeliusconsulting.jobqueuesim.exceptions.InvalidJobConfigException;
 import com.caeliusconsulting.jobqueuesim.exceptions.RetryLimitExceededException;
 import java.util.List;
 
-/** Runs the complete review narrative as one clean, labeled console trace. */
 public final class Main {
     private Main() {
     }
 
-    /** Demonstrates every required language concept without uncaught failures. */
     public static void main(String[] args) {
         System.out.println("[Header] Job Queue Simulation");
         Loggable sectionLogger = message -> System.out.println("[Loggable] " + message);

@@ -2,13 +2,11 @@ package com.caeliusconsulting.jobqueuesim;
 
 import com.caeliusconsulting.jobqueuesim.exceptions.JobExecutionException;
 
-/** Executes jobs and owns process-wide worker statistics and log state. */
 public class Worker {
     static int totalJobsProcessed = 0;
-    // StringBuffer is used instead of StringBuilder because this buffer is shared
-    // and mutated across worker threads; StringBuilder is not synchronized and is unsafe here.
+    // StringBuffer is synchronized because multiple worker threads mutate this shared buffer.
     static final StringBuffer sharedLog = new StringBuffer();
-    /** Executes one job while cleanly handling checked failures and final bookkeeping. */
+
     public void processJob(Job job) {
         try {
             job.execute();
@@ -26,7 +24,7 @@ public class Worker {
             }
         }
     }
-    /** Processes two jobs on real threads and waits for both to finish. */
+
     public void runInParallel(Job job1, Job job2) {
         Thread first = new Thread(() -> processJob(job1), "worker-1");
         Thread second = new Thread(() -> processJob(job2), "worker-2");

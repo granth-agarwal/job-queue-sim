@@ -1,38 +1,49 @@
 // Reference appendix — five short abstract-class patterns for the review appendix. Not part of the core pipeline.
 package com.caeliusconsulting.jobqueuesim.appendix;
 
-/** Collects compact, independent examples of common abstract-class patterns. */
 public final class AbstractClassPatterns {
     private AbstractClassPatterns() {
     }
-    /** Combines implemented and unimplemented behavior. */
+
     abstract static class Partial {
-        String label() { return "partial"; }
+        String label() { return getClass().getSimpleName(); }
         abstract int value();
     }
-    /** Shows that an abstract base may initialize inherited state. */
+    static final class CompletePartial extends Partial {
+        int value() { return label().length(); }
+    }
+
     abstract static class ConstructorBase {
         private final String name;
         ConstructorBase(String name) { this.name = name; }
         String name() { return name; }
-        abstract void use();
+        abstract String use();
     }
-    /** Fixes an algorithm's steps while delegating one step to subclasses. */
+    static final class NamedAction extends ConstructorBase {
+        NamedAction(String name) { super(name); }
+        String use() { return name().toUpperCase(); }
+    }
+
     abstract static class TemplateProcessor {
-        final void process() { before(); executeStep(); after(); }
-        void before() { }
-        abstract void executeStep();
-        void after() { }
+        final String process() { return "prepare -> " + executeStep() + " -> finish"; }
+        abstract String executeStep();
     }
-    /** Mixes class-wide utility behavior with required instance behavior. */
+    static final class SyncProcessor extends TemplateProcessor {
+        String executeStep() { return "synchronize"; }
+    }
+
     abstract static class StaticAbstractMix {
-        static String category() { return "mixed"; }
+        static String category() { return StaticAbstractMix.class.getSimpleName(); }
         abstract String details();
     }
-    /** Supplies reusable field-backed behavior to subclasses. */
+    static final class MixedDetail extends StaticAbstractMix {
+        String details() { return category().toLowerCase(); }
+    }
+
     abstract static class FieldBacked {
         private int count;
         void increment() { count++; }
         int count() { return count; }
     }
+    static final class Counter extends FieldBacked { }
 }
