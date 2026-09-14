@@ -26,8 +26,18 @@ public class Worker {
     }
 
     public void runInParallel(Job job1, Job job2) {
-        Thread first = new Thread(() -> processJob(job1), "worker-1");
-        Thread second = new Thread(() -> processJob(job2), "worker-2");
+        Thread first = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                processJob(job1);
+            }
+        }, "worker-1");
+        Thread second = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                processJob(job2);
+            }
+        }, "worker-2");
         first.start();
         second.start();
         try {

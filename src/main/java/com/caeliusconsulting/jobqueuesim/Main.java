@@ -10,7 +10,12 @@ public final class Main {
 
     public static void main(String[] args) {
         System.out.println("[Header] Job Queue Simulation");
-        Loggable sectionLogger = message -> System.out.println("[Loggable] " + message);
+        Loggable sectionLogger = new Loggable() {
+            @Override
+            public void log(String message) {
+                System.out.println("[Loggable] " + message);
+            }
+        };
         sectionLogger.logSeparator();
 
         System.out.println("[Builder / this] Building three chained job configurations:");
