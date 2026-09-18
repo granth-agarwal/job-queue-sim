@@ -19,7 +19,7 @@ public class DataSyncJob extends Job {
         if (simulateFailure) {
             throw new JobExecutionException("Data synchronization failed for " + getJobId());
         }
-        long batchNumber = getCreatedAt() % 1_000;
+        long batchNumber = getCreatedAt().toSecondOfDay() % 1_000;
         log("Syncing data batch " + batchNumber);
     }
 }

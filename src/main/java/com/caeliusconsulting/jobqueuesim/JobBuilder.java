@@ -21,10 +21,18 @@ public class JobBuilder {
             throw new InvalidJobConfigException("Job id and type are required");
         }
 
-        return switch (type) {
-            case EMAIL -> new EmailJob(id);
-            case REPORT -> new ReportGenerationJob(id);
-            case DATA_SYNC -> new DataSyncJob(id);
-        };
+        switch (type) {
+            case EMAIL:
+                return new EmailJob(id);
+
+            case REPORT:
+                return new ReportGenerationJob(id);
+
+            case DATA_SYNC:
+                return new DataSyncJob(id);
+
+            default:
+                throw new InvalidJobConfigException("Unsupported job type");
+        }
     }
 }

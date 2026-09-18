@@ -19,12 +19,18 @@ public final class Main {
         sectionLogger.logSeparator();
 
         System.out.println("[Builder / this] Building three chained job configurations:");
-        Job emailJob = new JobBuilder().setId("email-1")
-                .setType(JobType.EMAIL).build();
-        Job reportJob = new JobBuilder().setId("report-1")
-                .setType(JobType.REPORT).build();
-        Job dataSyncJob = new JobBuilder().setId("sync-1")
-                .setType(JobType.DATA_SYNC).build();
+        Job emailJob = new JobBuilder()
+                .setId("email-1")
+                .setType(JobType.EMAIL)
+                .build();
+        Job reportJob = new JobBuilder()
+                .setId("report-1")
+                .setType(JobType.REPORT)
+                .build();
+        Job dataSyncJob = new JobBuilder()
+                .setId("sync-1")
+                .setType(JobType.DATA_SYNC)
+                .build();
 
         Worker worker = new Worker();
         System.out.println("[Polymorphism] Running EmailJob through a Job reference:");
