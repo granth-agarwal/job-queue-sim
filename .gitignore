@@ -45,3 +45,9 @@ Thumbs.db
 
 # Graphify
 graphify-out
+
+.classpath
+.project
+.settings
+db
+simplelogger.properties

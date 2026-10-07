@@ -1,8 +1,8 @@
 package com.caeliusconsulting.jobqueuesim.collections;
 
-import com.caeliusconsulting.jobqueuesim.jobs.DataSyncJob;
-import com.caeliusconsulting.jobqueuesim.jobs.EmailJob;
-import com.caeliusconsulting.jobqueuesim.jobs.Job;
+import com.caeliusconsulting.jobqueuesim.domain.DataSyncJob;
+import com.caeliusconsulting.jobqueuesim.domain.EmailJob;
+import com.caeliusconsulting.jobqueuesim.domain.Job;
 
 import java.util.LinkedList;
 
@@ -36,11 +36,11 @@ public class LinkedListDemo {
         LinkedList<Job> history = new LinkedList<>();
 
         // addLast() — append to tail (O(1))
-        history.addLast(new EmailJob("email-ll-1"));
-        history.addLast(new DataSyncJob("sync-ll-1"));
+        history.addLast(new EmailJob("email-ll-1", 3));
+        history.addLast(new DataSyncJob("sync-ll-1", 3, 0));
 
         // addFirst() — prepend to head (O(1)) — most recent at front
-        history.addFirst(new EmailJob("email-ll-urgent"));
+        history.addFirst(new EmailJob("email-ll-urgent", 3));
 
         System.out.println("  Head (most recent): " + history.peekFirst());
         System.out.println("  Tail (oldest):      " + history.peekLast());

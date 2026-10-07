@@ -1,236 +1,78 @@
-# Job Queue Simulator — Java POC
+# Job Queue Simulator
 
-A minimal, runnable Java proof-of-concept that demonstrates core Java and database syllabus
-topics through the lens of a simple task-processing system — conceptually inspired by
-Celery/RabbitMQ, but implemented with **plain Java and plain JDBC only**.
+A small Java 17 application that processes a mixed batch of simulated email, report, and data-sync jobs. MySQL stores job states; a shared bounded `BlockingQueue<Job>` carries pending work to reusable workers.
 
-No Spring. No ORM. No Kafka. No Redis. No microservices.
-
----
-
-## Architecture
-
-```
-Main
- │
- ├── Collections demos  (ArrayList, LinkedList, Stack, Queue, Tree)
- ├── Exception demos    (InvalidJobConfigException, RetryLimitExceededException)
- │
- └── Concurrent Job Pipeline
-      │
-      ├── JobBuilder → creates typed Job instances
-      ├── JdbcJobRepository → persists jobs (status: QUEUED) via MySQL
-      │
-      ├── WorkerPool
-      │    └── ExecutorService (fixed, availableProcessors() threads)
-      │         └── Worker (Runnable) × 4 — one per queue type
-      │
-      ├── JobDispatcher → routes jobs to typed BlockingQueues
-      │    ├── emailQueue     → LinkedBlockingQueue<Job>
-      │    ├── reportQueue    → LinkedBlockingQueue<Job>
-      │    ├── dataSyncQueue  → LinkedBlockingQueue<Job>
-      │    └── fallbackQueue  → LinkedBlockingQueue<Job>
-      │
-      └── Job execution per worker:
-           claimJob() → PROCESSING → execute() → COMPLETED or FAILED → DB update
+```text
+Main → submission → JDBC repository → MySQL
+            ↓                ↑
+     BlockingQueue<Job> → worker pool → Job.execute()
 ```
 
----
+Startup loads configuration, opens the database pool, and creates the jobs table. It calculates worker count, starts that many consumers, persists each submitted job as `QUEUED`, and enqueues it. Workers atomically claim jobs as `PROCESSING`, execute them, and persist `COMPLETED`, `QUEUED` for a retry, or `FAILED`. After the batch finishes, the application queries its persisted summary, shuts down workers, and closes the database pool.
 
-## How Workers and Queues Work
+## Setup and run
 
-1. **`JobDispatcher`** routes each job to a typed `LinkedBlockingQueue` based on `job.getType()`.
-2. **`WorkerPool`** starts one `Worker` per queue type, all sharing a single `ExecutorService`
-   fixed thread pool (size = `Runtime.getRuntime().availableProcessors()`).
-3. Each **`Worker`** runs `BlockingQueue.take()` in a loop — it blocks until a job arrives,
-   eliminating busy-waiting.
-4. Before execution, the worker calls **`claimJob()`** which runs an atomic SQL:
-   ```sql
-   UPDATE jobs SET status = 'PROCESSING' WHERE id = ? AND status = 'QUEUED'
-   ```
-   If `affected rows == 0`, another worker already claimed it — the job is skipped.
-5. On success: status → `COMPLETED`. On `JobExecutionException`: status → `FAILED`.
-6. Workers are **non-daemon threads** — the JVM waits for them to finish.
-7. **Graceful shutdown**: `executor.shutdown()` → `awaitTermination(30s)` → `shutdownNow()`.
-
----
-
-## Syllabus Topic Mapping
-
-| Topic | File / Class |
-|---|---|
-| Abstract class | [`Job`](src/main/java/com/caeliusconsulting/jobqueuesim/jobs/Job.java) |
-| Inheritance / polymorphism | `EmailJob`, `ReportGenerationJob`, `DataSyncJob` |
-| Builder pattern | [`JobBuilder`](src/main/java/com/caeliusconsulting/jobqueuesim/jobs/JobBuilder.java) |
-| Interfaces | [`Loggable`](src/main/java/com/caeliusconsulting/jobqueuesim/jobs/Loggable.java), [`Retryable`](src/main/java/com/caeliusconsulting/jobqueuesim/jobs/Retryable.java), [`JobRepository`](src/main/java/com/caeliusconsulting/jobqueuesim/repository/JobRepository.java) |
-| Enums | [`JobType`](src/main/java/com/caeliusconsulting/jobqueuesim/jobs/JobType.java), [`JobStatus`](src/main/java/com/caeliusconsulting/jobqueuesim/jobs/JobStatus.java) |
-| Checked exceptions | `JobExecutionException`, `RetryLimitExceededException` |
-| Unchecked exceptions | `InvalidJobConfigException`, `DatabaseException` |
-| Exception wrapping / cause chain | [`DatabaseException`](src/main/java/com/caeliusconsulting/jobqueuesim/exceptions/DatabaseException.java) |
-| StringBuilder (thread-local) | [`LogFormatter`](src/main/java/com/caeliusconsulting/jobqueuesim/jobs/LogFormatter.java) |
-| `Runnable` / threads | [`Worker`](src/main/java/com/caeliusconsulting/jobqueuesim/worker/Worker.java) |
-| `ExecutorService` | [`WorkerPool`](src/main/java/com/caeliusconsulting/jobqueuesim/worker/WorkerPool.java) |
-| `BlockingQueue` | [`JobDispatcher`](src/main/java/com/caeliusconsulting/jobqueuesim/worker/JobDispatcher.java), `Worker` |
-| `AtomicInteger` (thread-safe state) | `Worker.totalJobsProcessed` |
-| Graceful shutdown | `WorkerPool.shutdown()` |
-| `ArrayList` | [`ArrayListDemo`](src/main/java/com/caeliusconsulting/jobqueuesim/collections/ArrayListDemo.java) |
-| `LinkedList` | [`LinkedListDemo`](src/main/java/com/caeliusconsulting/jobqueuesim/collections/LinkedListDemo.java) |
-| `Stack` | [`StackDemo`](src/main/java/com/caeliusconsulting/jobqueuesim/collections/StackDemo.java) |
-| `Queue` / `LinkedBlockingQueue` | [`QueueDemo`](src/main/java/com/caeliusconsulting/jobqueuesim/collections/QueueDemo.java) |
-| `TreeSet` / `TreeMap` | [`TreeDemo`](src/main/java/com/caeliusconsulting/jobqueuesim/collections/TreeDemo.java) |
-| JDBC `PreparedStatement` | [`JdbcJobRepository`](src/main/java/com/caeliusconsulting/jobqueuesim/repository/JdbcJobRepository.java) |
-| `executeQuery()` (SELECT) | `JdbcJobRepository.findById()`, `findAll()` |
-| `executeUpdate()` (INSERT/UPDATE/DELETE) | `JdbcJobRepository.create()`, `update()`, `delete()`, `claimJob()` |
-| `execute()` (DDL + SELECT demo) | `JdbcJobRepository.initSchema()`, `demonstrateExecute()` |
-| Try-with-resources | All `JdbcJobRepository` methods |
-| Transactions (commit/rollback) | `JdbcJobRepository.create()` |
-| Atomic DB claim | `JdbcJobRepository.claimJob()` |
-| SQL basics | [`schema.sql`](src/main/resources/schema.sql) |
-| Environment variable credentials | [`DatabaseConnection`](src/main/java/com/caeliusconsulting/jobqueuesim/database/DatabaseConnection.java) |
-
----
-
-## MySQL Setup
+Requires Java 17, Maven 3.8+, and MySQL 8+. Create a database and an application user with `CREATE`, `SELECT`, `INSERT`, and `UPDATE` permissions on it. For example, as a database administrator:
 
 ```sql
--- Run once in your MySQL client:
-CREATE DATABASE IF NOT EXISTS jobqueue;
+CREATE DATABASE jobqueue;
+CREATE USER 'jobqueue'@'localhost' IDENTIFIED BY 'choose-a-local-password';
+GRANT CREATE, SELECT, INSERT, UPDATE ON jobqueue.* TO 'jobqueue'@'localhost';
 ```
 
-The application creates the `jobs` table automatically on startup via `initSchema()`.
+The application loads `src/main/resources/schema.sql` automatically. If upgrading an existing table from the original project, apply the following migration once as an administrator before starting the application:
 
----
+```bash
+mysql -u root -p jobqueue < db/migrate-v1.sql
+```
 
-## Environment Variables
-
-Copy `.env.example` to `.env` (the `.env` file is gitignored — never commit it):
+Existing rows are retained. The application does not resume jobs left by earlier runs; this POC's database is a record of execution, not a durable scheduling queue. Each batch uses unique IDs, and summaries include only that batch. Log labels omit the run namespace for readability.
 
 ```bash
 cp .env.example .env
-# Edit .env with your real credentials
-```
-
-Required variables:
-
-| Variable | Example |
-|---|---|
-| `DB_URL` | `jdbc:mysql://localhost:3306/jobqueue?useSSL=false&allowPublicKeyRetrieval=true` |
-| `DB_USER` | `root` |
-| `DB_PASSWORD` | `your_password` |
-
----
-
-## How to Build and Run
-
-### Prerequisites
-
-- Java 17+
-- Maven 3.8+
-- MySQL 8.x running locally
-
-### Build
-
-```bash
-mvn clean package -q
-```
-
-### Run (export env vars first)
-
-```bash
-export DB_URL="jdbc:mysql://localhost:3306/jobqueue?useSSL=false&allowPublicKeyRetrieval=true"
-export DB_USER="root"
-export DB_PASSWORD="your_password"
-
-# Option A — fat jar
+# Edit .env with your database credentials.
+set -a
+source .env
+set +a
+mvn clean package
 java -jar target/job-queue-sim-1.0.0.jar
-
-# Option B — Maven exec plugin
-mvn exec:java -Dexec.mainClass="com.caeliusconsulting.jobqueuesim.Main"
 ```
 
-### Quick MySQL setup on macOS (Homebrew)
+`DB_URL` and `DB_USER` are required. `DB_PASSWORD` defaults to an empty string when omitted; an explicitly empty password is also accepted for a local database. In IntelliJ, a local database user with an empty password only needs `DB_URL` and `DB_USER` in the run configuration. The application reads environment variables; it does not load `.env` itself.
+
+| Optional variable | Default | Purpose |
+| --- | --- | --- |
+| `QUEUE_CAPACITY` | `64` | Maximum unfinished jobs admitted at once |
+| `MAX_JOB_ATTEMPTS` | `3` | Total attempts per job, including the first |
+| `WORKLOAD_PROFILE` | `IO_BOUND` | `CPU_BOUND`, `IO_BOUND`, or `MIXED` |
+| `WORKER_LIMIT` | `16` | Upper bound on worker threads |
+| `DB_POOL_SIZE` | `4` | Independent upper bound on database connections |
+| `BATCH_SIZE` | `9` | Number of jobs in the mixed demonstration batch |
+| `BATCH_TIMEOUT_SECONDS` | `120` | Deadline covering submission and execution |
+
+## Processing behavior
+
+Worker sizing starts with processors available to the JVM. The policy suggests that count for CPU work, twice that count for I/O work, or about 1.5 times that count for mixed work. These are conservative POC heuristics, not universal sizing formulas. The result is capped by `WORKER_LIMIT`, batch size, and queue capacity. A batch of 1,000 jobs reuses the same bounded worker pool.
+
+Admission uses a semaphore with the same capacity as the bounded queue. A permit is held until a job reaches a persisted terminal state, including across retries. This provides producer backpressure and guarantees space for a worker to requeue its job without deadlocking all consumers behind a full queue. Very small capacities also limit useful concurrency.
+
+A transient execution failure returns the job to the shared queue when attempts remain. The attempt count increases when the next attempt starts, and any available worker can claim it. Permanent failures and exhausted attempts become `FAILED`. The third default job fails once and then succeeds deterministically; setting `MAX_JOB_ATTEMPTS=1` shows exhaustion. No real email, report, or external sync integration runs.
+
+HikariCP manages the shared `DataSource`. Workers borrow JDBC connections only for short database operations and return them through try-with-resources before simulated work begins. Connection count is configured separately from worker count. SQL uses prepared statements and conditional updates; individual writes use auto-commit. Database failures abort the batch and retain their cause for diagnosis.
+
+Normal shutdown lets consumers finish and exit through timed queue polling. Interruption is a bounded fallback. Job failures appear as concise warnings, and a successful default batch reports 9 completed jobs, 1 retry, and 10 attempts. Concurrent event ordering varies.
+
+## Verification
+
+`mvn clean verify` runs the concurrency, retry, lifecycle, and configuration tests. To include the JDBC integration tests, point these variables at a disposable MySQL database where the test user can create and drop tables:
 
 ```bash
-brew install mysql
-brew services start mysql
-mysql -u root -e "CREATE DATABASE IF NOT EXISTS jobqueue;"
+export TEST_DB_URL='jdbc:mysql://localhost:3306/jobqueue_test?useSSL=false&allowPublicKeyRetrieval=true'
+export TEST_DB_USER='your-test-user'
+export TEST_DB_PASSWORD='your-test-password'
+mvn clean verify
 ```
 
----
+The JDBC tests replace the `jobs` table in that database to check fresh schema creation and the legacy migration. They are skipped when `TEST_DB_URL` is absent.
 
-## Expected Output (excerpt)
-
-```
-╔══════════════════════════════════════════════════╗
-║         JOB QUEUE SIMULATOR  —  POC             ║
-╚══════════════════════════════════════════════════╝
-
-  SECTION 1: COLLECTIONS DEMOS
-[ArrayList-1] Batch job collection: ...
-[TreeMap-2]   Jobs grouped and sorted by type: ...
-
-  SECTION 2: EXCEPTION DEMOS (Legacy)
-[Exception] Caught InvalidJobConfigException: Job id and type are required
-
-  SECTION 3: CONCURRENT JOB PIPELINE
-[DB] Schema initialised. execute() returned: false
-[WorkerPool] Starting 8 threads (availableProcessors=8)
-[worker-email] started on thread: Thread-0
-[worker-report] started on thread: Thread-1
-[Dispatcher] Routed job 'email-1' → EMAIL queue
-...
-[19:45:01.234] [worker-email]    JOB email-1 :: COMPLETED
-[19:45:01.251] [worker-datasync] JOB sync-fail-1 :: FAILED — Data sync failed
-
-  Final Job Status Summary
-  Job ID               Type            Status
-  ──────────────────────────────────────────────────
-  email-1              EMAIL           COMPLETED
-  email-2              EMAIL           COMPLETED
-  report-1             REPORT          COMPLETED
-  sync-fail-1          DATA_SYNC       FAILED
-  ...
-```
-
----
-
-## Package Structure
-
-```
-src/main/java/com/caeliusconsulting/jobqueuesim/
-├── Main.java
-├── jobs/
-│   ├── Job.java               — abstract base class
-│   ├── EmailJob.java
-│   ├── ReportGenerationJob.java
-│   ├── DataSyncJob.java
-│   ├── JobBuilder.java        — builder pattern
-│   ├── JobType.java           — enum (EMAIL, REPORT, DATA_SYNC, UNKNOWN)
-│   ├── JobStatus.java         — enum (QUEUED, PROCESSING, COMPLETED, FAILED)
-│   ├── Loggable.java          — interface with default method
-│   ├── Retryable.java         — interface (standalone demo, not in pipeline)
-│   ├── RetryableJob.java      — concrete demo class (not in pipeline)
-│   └── LogFormatter.java      — StringBuilder-based log formatter
-├── worker/
-│   ├── Worker.java            — Runnable, BlockingQueue.take(), AtomicInteger
-│   ├── WorkerPool.java        — ExecutorService, graceful shutdown
-│   └── JobDispatcher.java     — routes to typed LinkedBlockingQueues
-├── repository/
-│   ├── JobRepository.java     — interface (CRUD + claimJob)
-│   └── JdbcJobRepository.java — full JDBC implementation
-├── database/
-│   └── DatabaseConnection.java — DriverManager, env var credentials
-├── collections/
-│   ├── ArrayListDemo.java
-│   ├── LinkedListDemo.java
-│   ├── StackDemo.java
-│   ├── QueueDemo.java
-│   └── TreeDemo.java
-└── exceptions/
-    ├── JobExecutionException.java       — checked
-    ├── InvalidJobConfigException.java   — unchecked
-    ├── DatabaseException.java           — unchecked, wraps SQLException
-    └── RetryLimitExceededException.java — checked
-src/main/resources/
-└── schema.sql  — SQL learning file (SELECT, WHERE, ORDER BY, COUNT, GROUP BY, ...)
-```
+Original learning exercises remain under `examples/` and are excluded from the Maven application.

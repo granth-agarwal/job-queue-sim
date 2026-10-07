@@ -1,7 +1,7 @@
 package com.caeliusconsulting.jobqueuesim.collections;
 
-import com.caeliusconsulting.jobqueuesim.jobs.EmailJob;
-import com.caeliusconsulting.jobqueuesim.jobs.Job;
+import com.caeliusconsulting.jobqueuesim.domain.EmailJob;
+import com.caeliusconsulting.jobqueuesim.domain.Job;
 
 import java.util.Stack;
 
@@ -65,9 +65,9 @@ public class StackDemo {
         System.out.println("\n[Stack-2] Dispatch undo stack:");
 
         Stack<Job> undoStack = new Stack<>();
-        undoStack.push(new EmailJob("email-undo-1"));
-        undoStack.push(new EmailJob("email-undo-2"));
-        undoStack.push(new EmailJob("email-undo-3"));
+        undoStack.push(new EmailJob("email-undo-1", 3));
+        undoStack.push(new EmailJob("email-undo-2", 3));
+        undoStack.push(new EmailJob("email-undo-3", 3));
 
         System.out.println("  Dispatched " + undoStack.size() + " jobs.");
         System.out.println("  Last dispatched (peek): " + undoStack.peek().getJobId());

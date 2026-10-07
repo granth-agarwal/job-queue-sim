@@ -1,18 +1,7 @@
 package com.caeliusconsulting.jobqueuesim.exceptions;
 
-/**
- * Wraps JDBC SQLExceptions to decouple the repository layer from
- * java.sql — callers do not need to import java.sql to handle DB errors.
- *
- * Unchecked because database failures are not preventable by the caller
- * and should propagate up to the top-level error handler.
- *
- * Always preserves the original cause (original SQLException) for
- * full stack-trace visibility.
- *
- * Syllabus: Exception wrapping, unchecked exceptions, cause chaining
- */
-public class DatabaseException extends RuntimeException {
+public final class DatabaseException extends RuntimeException {
+    private static final long serialVersionUID = 1L;
 
     public DatabaseException(String message, Throwable cause) {
         super(message, cause);

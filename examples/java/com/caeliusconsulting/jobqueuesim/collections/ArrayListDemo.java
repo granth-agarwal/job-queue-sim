@@ -1,8 +1,8 @@
 package com.caeliusconsulting.jobqueuesim.collections;
 
-import com.caeliusconsulting.jobqueuesim.jobs.EmailJob;
-import com.caeliusconsulting.jobqueuesim.jobs.Job;
-import com.caeliusconsulting.jobqueuesim.jobs.ReportGenerationJob;
+import com.caeliusconsulting.jobqueuesim.domain.EmailJob;
+import com.caeliusconsulting.jobqueuesim.domain.Job;
+import com.caeliusconsulting.jobqueuesim.domain.ReportGenerationJob;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -34,9 +34,9 @@ public class ArrayListDemo {
         System.out.println("\n[ArrayList-1] Batch job collection:");
 
         List<Job> batch = new ArrayList<>();
-        batch.add(new EmailJob("email-batch-1"));
-        batch.add(new EmailJob("email-batch-2"));
-        batch.add(new ReportGenerationJob("report-batch-1"));
+        batch.add(new EmailJob("email-batch-1", 3));
+        batch.add(new EmailJob("email-batch-2", 3));
+        batch.add(new ReportGenerationJob("report-batch-1", 3));
 
         System.out.println("  Batch size: " + batch.size());
         for (int i = 0; i < batch.size(); i++) {

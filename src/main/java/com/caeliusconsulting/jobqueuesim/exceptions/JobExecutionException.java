@@ -1,20 +1,15 @@
 package com.caeliusconsulting.jobqueuesim.exceptions;
 
-/**
- * Thrown when a job fails during execution.
- *
- * Checked because execution failures are recoverable — the worker catches this,
- * marks the job FAILED, and continues processing other jobs.
- *
- * Syllabus: Checked exceptions, exception hierarchy
- */
-public class JobExecutionException extends Exception {
+public final class JobExecutionException extends Exception {
+    private static final long serialVersionUID = 1L;
+    private final boolean transientFailure;
 
-    public JobExecutionException(String message) {
+    public JobExecutionException(String message, boolean transientFailure) {
         super(message);
+        this.transientFailure = transientFailure;
     }
 
-    public JobExecutionException(String message, Throwable cause) {
-        super(message, cause);
+    public boolean isTransient() {
+        return transientFailure;
     }
 }

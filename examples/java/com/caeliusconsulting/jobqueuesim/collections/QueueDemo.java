@@ -1,9 +1,9 @@
 package com.caeliusconsulting.jobqueuesim.collections;
 
-import com.caeliusconsulting.jobqueuesim.jobs.DataSyncJob;
-import com.caeliusconsulting.jobqueuesim.jobs.EmailJob;
-import com.caeliusconsulting.jobqueuesim.jobs.Job;
-import com.caeliusconsulting.jobqueuesim.jobs.ReportGenerationJob;
+import com.caeliusconsulting.jobqueuesim.domain.DataSyncJob;
+import com.caeliusconsulting.jobqueuesim.domain.EmailJob;
+import com.caeliusconsulting.jobqueuesim.domain.Job;
+import com.caeliusconsulting.jobqueuesim.domain.ReportGenerationJob;
 
 import java.util.LinkedList;
 import java.util.Queue;
@@ -41,9 +41,9 @@ public class QueueDemo {
         System.out.println("\n[Queue-1] Simple FIFO queue (LinkedList as Queue):");
 
         Queue<Job> fifo = new LinkedList<>();
-        fifo.offer(new EmailJob("q-email-1"));
-        fifo.offer(new ReportGenerationJob("q-report-1"));
-        fifo.offer(new DataSyncJob("q-sync-1"));
+        fifo.offer(new EmailJob("q-email-1", 3));
+        fifo.offer(new ReportGenerationJob("q-report-1", 3));
+        fifo.offer(new DataSyncJob("q-sync-1", 3, 0));
 
         System.out.println("  Queue size: " + fifo.size());
         System.out.println("  Head (peek): " + fifo.peek());
@@ -74,8 +74,8 @@ public class QueueDemo {
         LinkedBlockingQueue<Job> blockingQueue = new LinkedBlockingQueue<>();
 
         try {
-            blockingQueue.put(new EmailJob("bq-email-1"));
-            blockingQueue.put(new EmailJob("bq-email-2"));
+            blockingQueue.put(new EmailJob("bq-email-1", 3));
+            blockingQueue.put(new EmailJob("bq-email-2", 3));
             System.out.println("  Enqueued 2 jobs. Queue size: " + blockingQueue.size());
 
             // take() — removes head; blocks if empty (non-blocking here since items exist)

@@ -1,132 +1,94 @@
 package com.caeliusconsulting.jobqueuesim.worker;
 
+import com.caeliusconsulting.jobqueuesim.domain.Job;
 import com.caeliusconsulting.jobqueuesim.exceptions.DatabaseException;
 import com.caeliusconsulting.jobqueuesim.exceptions.JobExecutionException;
-import com.caeliusconsulting.jobqueuesim.jobs.Job;
-import com.caeliusconsulting.jobqueuesim.jobs.JobStatus;
-import com.caeliusconsulting.jobqueuesim.jobs.LogFormatter;
 import com.caeliusconsulting.jobqueuesim.repository.JobRepository;
+import com.caeliusconsulting.jobqueuesim.util.LogFormatter;
 
-import java.time.LocalDateTime;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.TimeUnit;
 
-/**
- * A Runnable worker that continuously drains jobs from a BlockingQueue.
- *
- * Lifecycle per job:
- *   claimJob() → PROCESSING → execute() → COMPLETED or FAILED → update DB
- *
- * Design decisions:
- *   - Workers are non-daemon threads (pool uses default factory).
- *   - Shared state (totalJobsProcessed) uses AtomicInteger — no explicit lock needed.
- *   - No shared StringBuilder — each worker prints its own log lines. Avoids
- *     the race conditions present in the original code.
- *   - Loop exits cleanly on InterruptedException (graceful shutdown signal).
- *   - DatabaseException during status update is logged but does not crash the worker.
- *
- * Syllabus: Runnable, BlockingQueue, AtomicInteger, thread safety, ExecutorService workers
- */
-public class Worker implements Runnable {
-
-    /**
-     * Shared counter across all Worker instances.
-     * AtomicInteger ensures increment is atomic without explicit synchronisation.
-     *
-     * Syllabus: AtomicInteger, thread-safe shared state
-     */
-    public static final AtomicInteger totalJobsProcessed = new AtomicInteger(0);
-
+final class Worker implements Runnable {
     private final BlockingQueue<Job> queue;
-    private final JobRepository      repository;
-    private final String             workerName;
+    private final JobRepository repository;
+    private final WorkerPool pool;
 
-    public Worker(BlockingQueue<Job> queue, JobRepository repository, String workerName) {
-        this.queue      = queue;
+    Worker(BlockingQueue<Job> queue, JobRepository repository, WorkerPool pool) {
+        this.queue = queue;
         this.repository = repository;
-        this.workerName = workerName;
+        this.pool = pool;
     }
 
-    /**
-     * Main worker loop.
-     *
-     * BlockingQueue.take() blocks until a job is available, eliminating
-     * busy-waiting. The loop exits when interrupted (shutdown signal from
-     * ExecutorService.shutdownNow() or Thread.interrupt()).
-     *
-     * Syllabus: BlockingQueue.take(), InterruptedException, graceful shutdown
-     */
     @Override
     public void run() {
-        System.out.println("[" + workerName + "] started on thread: " +
-                           Thread.currentThread().getName());
-
-        while (!Thread.currentThread().isInterrupted()) {
-            Job job = null;
-            try {
-                // Blocking call — waits until a job arrives
-                job = queue.take();
-
-                processJob(job);
-
-            } catch (InterruptedException e) {
-                // Restore interrupt flag and exit loop cleanly
-                Thread.currentThread().interrupt();
-                System.out.println("[" + workerName + "] interrupted — shutting down");
+        try {
+            while (pool.isRunning()) {
+                Job job = queue.poll(100, TimeUnit.MILLISECONDS);
+                if (job != null) {
+                    process(job);
+                }
             }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            pool.fail(new IllegalStateException("Worker interrupted", e));
+        } catch (RuntimeException e) {
+            pool.fail(e);
+        } catch (Error e) {
+            pool.fail(new IllegalStateException("Worker failed", e));
+            throw e;
         }
-
-        System.out.println("[" + workerName + "] stopped.");
     }
 
-    /**
-     * Handles a single job: claim → execute → update status.
-     *
-     * Exception handling:
-     *   - claimJob() returning false → another worker grabbed it first (skip)
-     *   - JobExecutionException       → FAILED path
-     *   - DatabaseException           → logged; job may be left in PROCESSING
-     */
-    private void processJob(Job job) {
-        // Atomic claim — prevents two workers from double-processing
-        boolean claimed = repository.claimJob(job.getJobId());
-        if (!claimed) {
-            System.out.println("[" + workerName + "] Job '" + job.getJobId() +
-                               "' already claimed by another worker — skipping");
-            return;
+    private void process(Job job) throws InterruptedException {
+        job.beginAttempt();
+        if (!repository.claim(job)) {
+            throw new DatabaseException("Cannot claim queued job " + job.getJobId());
         }
-
-        job.setStatus(JobStatus.PROCESSING);
-        System.out.println(LogFormatter.formatJobLog(
-                job.getJobId(), "PROCESSING started by " + workerName, LocalDateTime.now()));
-
+        LogFormatter.job("INFO", job, "PROCESSING attempt " + job.getAttemptCount()
+                + "/" + job.getMaxAttempts());
         try {
             job.execute();
-
-            // Success path
-            job.setStatus(JobStatus.COMPLETED);
-            repository.update(job);
-            System.out.println(LogFormatter.formatJobLog(
-                    job.getJobId(), "COMPLETED", LocalDateTime.now()));
-
         } catch (JobExecutionException e) {
-            // Recoverable execution failure → FAILED
-            job.setStatus(JobStatus.FAILED);
-            try {
+            if (job.canRetry(e)) {
+                job.requeue(e.getMessage());
                 repository.update(job);
-            } catch (DatabaseException dbEx) {
-                System.err.println("[" + workerName + "] Failed to persist FAILED status: "
-                                   + dbEx.getMessage());
+                LogFormatter.job("WARN", job, "RETRY attempt " + job.getAttemptCount()
+                        + "/" + job.getMaxAttempts() + ": " + e.getMessage());
+                pool.requeue(job);
+            } else {
+                failJob(job, e.getMessage());
             }
-            System.err.println(LogFormatter.formatJobLog(
-                    job.getJobId(), "FAILED — " + e.getMessage(), LocalDateTime.now()));
-
-        } catch (DatabaseException e) {
-            System.err.println("[" + workerName + "] DB error while updating job '"
-                               + job.getJobId() + "': " + e.getMessage());
-        } finally {
-            // AtomicInteger increment — thread-safe without synchronised block
-            totalJobsProcessed.incrementAndGet();
+            return;
+        } catch (InterruptedException e) {
+            pool.fail(new IllegalStateException("Execution interrupted", e));
+            try {
+                failJob(job, "Execution interrupted");
+            } catch (RuntimeException persistenceFailure) {
+                e.addSuppressed(persistenceFailure);
+            } finally {
+                Thread.currentThread().interrupt();
+            }
+            throw e;
+        } catch (RuntimeException e) {
+            pool.fail(e);
+            try {
+                failJob(job, "Unexpected execution failure: " + e.getMessage());
+            } catch (RuntimeException persistenceFailure) {
+                e.addSuppressed(persistenceFailure);
+            }
+            throw e;
         }
+        job.complete();
+        repository.update(job);
+        LogFormatter.job("INFO", job, "COMPLETED");
+        pool.jobFinished();
+    }
+
+    private void failJob(Job job, String message) {
+        job.fail(message);
+        repository.update(job);
+        LogFormatter.job("WARN", job, "FAILED: " + message);
+        pool.jobFinished();
     }
 }

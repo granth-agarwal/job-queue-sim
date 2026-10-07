@@ -1,86 +1,178 @@
 package com.caeliusconsulting.jobqueuesim.worker;
 
+import com.caeliusconsulting.jobqueuesim.domain.Job;
 import com.caeliusconsulting.jobqueuesim.repository.JobRepository;
+import com.caeliusconsulting.jobqueuesim.util.LogFormatter;
 
+import java.time.Duration;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
-/**
- * Manages the lifecycle of the shared thread pool and worker submission.
- *
- * Design:
- *   - Single fixed thread pool sized to availableProcessors()
- *   - One Worker per queue type submitted to the shared pool
- *   - Worker threads are non-daemon (default ThreadFactory behaviour)
- *   - Graceful shutdown: shutdown() → awaitTermination(30s) → shutdownNow()
- *
- * Syllabus: ExecutorService, fixed thread pool, graceful shutdown,
- *           availableProcessors(), non-daemon threads
- */
-public class WorkerPool {
+/** Lifecycle and submission methods are owned by a single producer. */
+public final class WorkerPool implements AutoCloseable {
+    private static final long POLL_MILLIS = 100;
+    private static final long SHUTDOWN_SECONDS = 5;
 
-    /** Worker count defaults to the number of CPU logical cores. */
-    private static final int WORKER_COUNT =
-            Runtime.getRuntime().availableProcessors();
-
+    private final JobRepository repository;
+    private final BlockingQueue<Job> queue;
+    private final Semaphore admission;
+    private final CountDownLatch completion;
     private final ExecutorService executor;
-    private final JobDispatcher   dispatcher;
+    private final int workerCount;
+    private final int batchSize;
+    private final Duration batchTimeout;
+    private final AtomicReference<RuntimeException> failure = new AtomicReference<>();
+    private volatile boolean accepting;
+    private volatile boolean closing;
+    private boolean started;
+    private int submitted;
+    private long deadline;
 
-    public WorkerPool(JobDispatcher dispatcher) {
-        this.dispatcher = dispatcher;
-        // Fixed pool — not one thread per job, not one pool per queue
-        this.executor   = Executors.newFixedThreadPool(WORKER_COUNT,
-                r -> {
-                    Thread t = new Thread(r);
-                    t.setDaemon(false);  // Non-daemon — JVM waits for workers to finish
-                    return t;
-                });
+    public WorkerPool(JobRepository repository, int workerCount, int queueCapacity,
+                      int batchSize, Duration batchTimeout) {
+        if (workerCount < 1 || workerCount > queueCapacity || batchSize < workerCount
+                || batchTimeout.isNegative() || batchTimeout.isZero()) {
+            throw new IllegalArgumentException("Invalid worker pool configuration");
+        }
+        this.repository = repository;
+        this.workerCount = workerCount;
+        this.batchSize = batchSize;
+        this.batchTimeout = batchTimeout;
+        this.queue = new ArrayBlockingQueue<>(queueCapacity, true);
+        // Bound unfinished jobs so a retry never blocks workers behind a full queue.
+        this.admission = new Semaphore(queueCapacity);
+        this.completion = new CountDownLatch(batchSize);
+        AtomicInteger threadSequence = new AtomicInteger();
+        this.executor = Executors.newFixedThreadPool(workerCount, task ->
+                new Thread(task, "worker-" + threadSequence.incrementAndGet()));
     }
 
-    /**
-     * Submits one Worker per queue type to the shared executor.
-     *
-     * Email, report, and data-sync workers all compete for threads from the
-     * same pool. The fallback worker handles UNKNOWN-typed jobs.
-     */
     public void start() {
-        int cpus = WORKER_COUNT;
-        System.out.println("[WorkerPool] Starting " + cpus + " threads (availableProcessors=" + cpus + ")");
-
-        JobRepository repo = dispatcher.getRepository();
-
-        // Submit one named worker per queue — they all share the same thread pool
-        executor.submit(new Worker(dispatcher.getEmailQueue(),    repo, "worker-email"));
-        executor.submit(new Worker(dispatcher.getReportQueue(),   repo, "worker-report"));
-        executor.submit(new Worker(dispatcher.getDataSyncQueue(), repo, "worker-datasync"));
-        executor.submit(new Worker(dispatcher.getFallbackQueue(), repo, "worker-fallback"));
+        if (started || executor.isShutdown()) {
+            throw new IllegalStateException("Worker pool cannot be started again");
+        }
+        started = true;
+        accepting = true;
+        deadline = System.nanoTime() + batchTimeout.toNanos();
+        for (int index = 0; index < workerCount; index++) {
+            executor.execute(new Worker(queue, repository, this));
+        }
+        LogFormatter.info("Worker pool started");
     }
 
-    /**
-     * Gracefully shuts down the worker pool.
-     *
-     * 1. shutdown()         — no new tasks accepted; existing workers finish current job
-     * 2. awaitTermination() — wait up to 30 seconds for workers to drain their queues
-     * 3. shutdownNow()      — interrupt workers if they haven't stopped (sends InterruptedException)
-     *
-     * Syllabus: ExecutorService.shutdown(), awaitTermination(), shutdownNow()
-     */
-    public void shutdown() {
-        System.out.println("[WorkerPool] Initiating graceful shutdown...");
-        executor.shutdown();
-
+    public void submit(Job job) throws InterruptedException {
+        checkAccepting();
+        while (!admission.tryAcquire(POLL_MILLIS, TimeUnit.MILLISECONDS)) {
+            checkAccepting();
+        }
+        boolean enqueued = false;
         try {
-            if (!executor.awaitTermination(30, TimeUnit.SECONDS)) {
-                System.out.println("[WorkerPool] Workers did not finish in 30s — forcing shutdown");
-                executor.shutdownNow();
+            checkAccepting();
+            if (submitted >= batchSize) {
+                throw new IllegalStateException("Batch submission limit reached");
             }
+            repository.create(job);
+            LogFormatter.job("INFO", job, "QUEUED [" + job.getType() + "]");
+            queue.add(job);
+            submitted++;
+            enqueued = true;
+        } finally {
+            if (!enqueued) {
+                admission.release();
+            }
+        }
+    }
+
+    public void finishSubmission() {
+        if (submitted != batchSize) {
+            throw new IllegalStateException("Expected " + batchSize + " submitted jobs, received " + submitted);
+        }
+        accepting = false;
+    }
+
+    public void awaitCompletion() throws InterruptedException {
+        if (!started) {
+            throw new IllegalStateException("Worker pool has not started");
+        }
+        while (!completion.await(POLL_MILLIS, TimeUnit.MILLISECONDS)) {
+            checkHealthy();
+        }
+        checkHealthy();
+    }
+
+    boolean isRunning() {
+        return failure.get() == null && (accepting || !queue.isEmpty() || (!closing && completion.getCount() > 0));
+    }
+
+    void requeue(Job job) {
+        LogFormatter.job("INFO", job, "RE-QUEUED");
+        queue.add(job);
+    }
+
+    void jobFinished() {
+        completion.countDown();
+        admission.release();
+    }
+
+    void fail(RuntimeException cause) {
+        failure.compareAndSet(null, cause);
+        accepting = false;
+    }
+
+    private void checkAccepting() {
+        if (!started || executor.isShutdown()) {
+            throw new IllegalStateException("Worker pool is not accepting jobs");
+        }
+        checkHealthy();
+        if (!accepting) {
+            throw new IllegalStateException("Worker pool is not accepting jobs");
+        }
+    }
+
+    private void checkHealthy() {
+        RuntimeException cause = failure.get();
+        if (cause != null) {
+            throw new IllegalStateException("Worker pool aborted", cause);
+        }
+        if (System.nanoTime() - deadline >= 0) {
+            throw new IllegalStateException("Batch exceeded " + batchTimeout.toSeconds() + " seconds");
+        }
+    }
+
+    @Override
+    public void close() {
+        accepting = false;
+        closing = true;
+        executor.shutdown();
+        try {
+            if (!executor.awaitTermination(SHUTDOWN_SECONDS, TimeUnit.SECONDS)) {
+                LogFormatter.error("Worker shutdown timed out; interrupting remaining work");
+                executor.shutdownNow();
+                if (!executor.awaitTermination(SHUTDOWN_SECONDS, TimeUnit.SECONDS)) {
+                    throw new IllegalStateException("Worker threads did not terminate");
+                }
+                throw new IllegalStateException("Worker shutdown required interruption");
+            }
+            LogFormatter.info("Worker pool shut down successfully");
         } catch (InterruptedException e) {
             executor.shutdownNow();
-            Thread.currentThread().interrupt();
+            try {
+                if (!executor.awaitTermination(SHUTDOWN_SECONDS, TimeUnit.SECONDS)) {
+                    e.addSuppressed(new IllegalStateException("Worker threads did not terminate"));
+                }
+            } catch (InterruptedException repeated) {
+                e.addSuppressed(repeated);
+            } finally {
+                Thread.currentThread().interrupt();
+            }
+            throw new IllegalStateException("Interrupted while shutting down workers", e);
         }
-
-        System.out.println("[WorkerPool] All workers stopped. " +
-                           "Total jobs processed: " + Worker.totalJobsProcessed.get());
     }
 }
