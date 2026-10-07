@@ -1,6 +1,5 @@
-package com.caeliusconsulting.jobqueuesim.domain;
+package com.caeliusconsulting.jobqueuesim.jobs;
 
-import com.caeliusconsulting.jobqueuesim.exceptions.InvalidJobConfigException;
 import com.caeliusconsulting.jobqueuesim.exceptions.JobExecutionException;
 
 import java.time.LocalDateTime;
@@ -16,10 +15,10 @@ public abstract class Job {
 
     protected Job(String jobId, int maxAttempts) {
         if (jobId == null || jobId.isBlank() || jobId.length() > 100) {
-            throw new InvalidJobConfigException("Job ID must contain 1 to 100 characters");
+            throw new IllegalArgumentException("Job ID must contain 1 to 100 characters");
         }
         if (maxAttempts < 1) {
-            throw new InvalidJobConfigException("Maximum attempts must be positive");
+            throw new IllegalArgumentException("Maximum attempts must be positive");
         }
         this.jobId = jobId;
         this.maxAttempts = maxAttempts;
@@ -28,6 +27,10 @@ public abstract class Job {
     }
 
     public final String getJobId() { return jobId; }
+    public final String getDisplayId() {
+        return jobId.substring(jobId.lastIndexOf(':') + 1);
+    }
+
     public final int getMaxAttempts() { return maxAttempts; }
     public final int getAttemptCount() { return attemptCount; }
     public final LocalDateTime getCreatedAt() { return createdAt; }

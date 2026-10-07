@@ -1,21 +1,18 @@
 package com.caeliusconsulting.jobqueuesim.repository;
 
-import com.caeliusconsulting.jobqueuesim.domain.ExecutionSummary;
-import com.caeliusconsulting.jobqueuesim.domain.Job;
 import com.caeliusconsulting.jobqueuesim.exceptions.DatabaseException;
+import com.caeliusconsulting.jobqueuesim.jobs.Job;
+import com.caeliusconsulting.jobqueuesim.jobs.JobStatus;
 
-import javax.sql.DataSource;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
+import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
-import java.util.Collections;
-import java.util.List;
-import java.util.Objects;
 
 public final class JdbcJobRepository implements JobRepository {
     private static final String INSERT_SQL = """
@@ -31,10 +28,14 @@ public final class JdbcJobRepository implements JobRepository {
             UPDATE jobs SET status = ?, error_message = ?, updated_at = ?
             WHERE id = ? AND status = 'PROCESSING' AND attempt_count = ?
             """;
-    private final DataSource dataSource;
+    private final String dbUrl;
+    private final String dbUser;
+    private final String dbPassword;
 
-    public JdbcJobRepository(DataSource dataSource) {
-        this.dataSource = Objects.requireNonNull(dataSource);
+    public JdbcJobRepository() {
+        this.dbUrl = requiredEnvironment("DB_URL");
+        this.dbUser = requiredEnvironment("DB_USER");
+        this.dbPassword = System.getenv().getOrDefault("DB_PASSWORD", "");
     }
 
     public void initSchema() {
@@ -47,27 +48,17 @@ public final class JdbcJobRepository implements JobRepository {
         } catch (IOException e) {
             throw new DatabaseException("Cannot read database schema", e);
         }
-        try (Connection connection = dataSource.getConnection();
+        try (Connection connection = getConnection();
              PreparedStatement statement = connection.prepareStatement(schema)) {
             statement.executeUpdate();
         } catch (SQLException e) {
             throw new DatabaseException("Cannot initialize jobs table", e);
         }
-        try (Connection connection = dataSource.getConnection();
-             PreparedStatement statement = connection.prepareStatement("""
-                     SELECT id, type, status, attempt_count, max_attempts, error_message, created_at, updated_at
-                     FROM jobs WHERE 1 = 0
-                     """);
-             ResultSet result = statement.executeQuery()) {
-            result.getMetaData();
-        } catch (SQLException e) {
-            throw new DatabaseException("Incompatible jobs table; apply db/migrate-v1.sql when upgrading", e);
-        }
     }
 
     @Override
     public void create(Job job) {
-        try (Connection connection = dataSource.getConnection();
+        try (Connection connection = getConnection();
              PreparedStatement statement = connection.prepareStatement(INSERT_SQL)) {
             statement.setString(1, job.getJobId());
             statement.setString(2, job.getType().name());
@@ -85,7 +76,7 @@ public final class JdbcJobRepository implements JobRepository {
 
     @Override
     public boolean claim(Job job) {
-        try (Connection connection = dataSource.getConnection();
+        try (Connection connection = getConnection();
              PreparedStatement statement = connection.prepareStatement(CLAIM_SQL)) {
             statement.setInt(1, job.getAttemptCount());
             statement.setTimestamp(2, Timestamp.valueOf(job.getUpdatedAt()));
@@ -99,7 +90,7 @@ public final class JdbcJobRepository implements JobRepository {
 
     @Override
     public void update(Job job) {
-        try (Connection connection = dataSource.getConnection();
+        try (Connection connection = getConnection();
              PreparedStatement statement = connection.prepareStatement(UPDATE_SQL)) {
             statement.setString(1, job.getStatus().name());
             statement.setString(2, job.getErrorMessage());
@@ -113,40 +104,31 @@ public final class JdbcJobRepository implements JobRepository {
     }
 
     @Override
-    public ExecutionSummary summarize(List<String> jobIds) {
-        if (jobIds.isEmpty()) {
-            return new ExecutionSummary(0, 0, 0, 0, 0);
-        }
-        String placeholders = String.join(",", Collections.nCopies(jobIds.size(), "?"));
-        String sql = """
-                SELECT COUNT(*) AS submitted,
-                       COALESCE(SUM(CASE WHEN status = 'COMPLETED' THEN 1 ELSE 0 END), 0) AS completed,
-                       COALESCE(SUM(CASE WHEN status = 'FAILED' THEN 1 ELSE 0 END), 0) AS failed,
-                       COALESCE(SUM(GREATEST(attempt_count - 1, 0)), 0) AS retries,
-                       COALESCE(SUM(attempt_count), 0) AS total_attempts
-                FROM jobs WHERE id IN (%s)
-                """.formatted(placeholders);
-        try (Connection connection = dataSource.getConnection();
-             PreparedStatement statement = connection.prepareStatement(sql)) {
-            for (int index = 0; index < jobIds.size(); index++) {
-                statement.setString(index + 1, jobIds.get(index));
-            }
+    public JobStatus findStatus(String jobId) {
+        try (Connection connection = getConnection();
+             PreparedStatement statement = connection.prepareStatement("SELECT status FROM jobs WHERE id = ?")) {
+            statement.setString(1, jobId);
             try (ResultSet result = statement.executeQuery()) {
                 if (!result.next()) {
-                    throw new DatabaseException("Database returned no execution summary");
+                    throw new DatabaseException("Job not found: " + jobId);
                 }
-                ExecutionSummary summary = new ExecutionSummary(result.getInt("submitted"),
-                        result.getInt("completed"), result.getInt("failed"),
-                        result.getInt("retries"), result.getInt("total_attempts"));
-                if (summary.submitted() != jobIds.size()
-                        || summary.completed() + summary.failed() != summary.submitted()) {
-                    throw new DatabaseException("Batch has missing or unfinished persisted jobs");
-                }
-                return summary;
+                return JobStatus.valueOf(result.getString("status"));
             }
         } catch (SQLException e) {
-            throw new DatabaseException("Cannot query execution summary", e);
+            throw new DatabaseException("Cannot read job " + jobId, e);
         }
+    }
+
+    private Connection getConnection() throws SQLException {
+        return DriverManager.getConnection(dbUrl, dbUser, dbPassword);
+    }
+
+    private static String requiredEnvironment(String name) {
+        String value = System.getenv(name);
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException("Missing environment variable: " + name);
+        }
+        return value;
     }
 
     private static void requireOneRow(int affectedRows, Job job) {

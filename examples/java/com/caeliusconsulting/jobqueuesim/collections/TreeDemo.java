@@ -1,6 +1,6 @@
 package com.caeliusconsulting.jobqueuesim.collections;
 
-import com.caeliusconsulting.jobqueuesim.domain.JobType;
+import com.caeliusconsulting.jobqueuesim.jobs.JobType;
 
 import java.util.ArrayList;
 import java.util.List;

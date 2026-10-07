@@ -49,5 +49,3 @@ graphify-out
 .classpath
 .project
 .settings
-db
-simplelogger.properties

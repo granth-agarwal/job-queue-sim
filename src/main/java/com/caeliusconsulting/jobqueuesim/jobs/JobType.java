@@ -1,4 +1,4 @@
-package com.caeliusconsulting.jobqueuesim.domain;
+package com.caeliusconsulting.jobqueuesim.jobs;
 
 public enum JobType {
     EMAIL,

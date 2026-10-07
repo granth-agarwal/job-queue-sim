@@ -1,4 +1,4 @@
-package com.caeliusconsulting.jobqueuesim.domain;
+package com.caeliusconsulting.jobqueuesim.jobs;
 
 public final class ReportGenerationJob extends Job {
     public ReportGenerationJob(String jobId, int maxAttempts) {

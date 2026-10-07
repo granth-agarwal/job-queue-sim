@@ -1,6 +1,5 @@
-package com.caeliusconsulting.jobqueuesim.domain;
+package com.caeliusconsulting.jobqueuesim.jobs;
 
-import com.caeliusconsulting.jobqueuesim.exceptions.InvalidJobConfigException;
 import com.caeliusconsulting.jobqueuesim.exceptions.JobExecutionException;
 
 public final class DataSyncJob extends Job {
@@ -9,7 +8,7 @@ public final class DataSyncJob extends Job {
     public DataSyncJob(String jobId, int maxAttempts, int transientFailures) {
         super(jobId, maxAttempts);
         if (transientFailures < 0) {
-            throw new InvalidJobConfigException("Transient failure count cannot be negative");
+            throw new IllegalArgumentException("Transient failure count cannot be negative");
         }
         this.transientFailures = transientFailures;
     }
@@ -21,9 +20,10 @@ public final class DataSyncJob extends Job {
 
     @Override
     public void execute() throws JobExecutionException, InterruptedException {
-        Thread.sleep(250);
         if (getAttemptCount() <= transientFailures) {
+            Thread.sleep(80);
             throw new JobExecutionException("Data source temporarily unavailable", true);
         }
+        Thread.sleep(250);
     }
 }

@@ -1,29 +1,35 @@
 package com.caeliusconsulting.jobqueuesim.worker;
 
-import com.caeliusconsulting.jobqueuesim.domain.Job;
 import com.caeliusconsulting.jobqueuesim.exceptions.DatabaseException;
 import com.caeliusconsulting.jobqueuesim.exceptions.JobExecutionException;
+import com.caeliusconsulting.jobqueuesim.jobs.Job;
 import com.caeliusconsulting.jobqueuesim.repository.JobRepository;
-import com.caeliusconsulting.jobqueuesim.util.LogFormatter;
 
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
-final class Worker implements Runnable {
+public final class Worker implements Runnable {
     private final BlockingQueue<Job> queue;
     private final JobRepository repository;
-    private final WorkerPool pool;
+    private final AtomicInteger remainingJobs;
+    private RuntimeException failure;
 
-    Worker(BlockingQueue<Job> queue, JobRepository repository, WorkerPool pool) {
+    public Worker(BlockingQueue<Job> queue, JobRepository repository, AtomicInteger remainingJobs) {
         this.queue = queue;
         this.repository = repository;
-        this.pool = pool;
+        this.remainingJobs = remainingJobs;
+    }
+
+    public RuntimeException getFailure() {
+        return failure;
     }
 
     @Override
     public void run() {
+        System.out.printf("[%s] Worker started%n", Thread.currentThread().getName());
         try {
-            while (pool.isRunning()) {
+            while (remainingJobs.get() > 0 && !Thread.currentThread().isInterrupted()) {
                 Job job = queue.poll(100, TimeUnit.MILLISECONDS);
                 if (job != null) {
                     process(job);
@@ -31,12 +37,13 @@ final class Worker implements Runnable {
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            pool.fail(new IllegalStateException("Worker interrupted", e));
+            failure = new IllegalStateException("Worker interrupted", e);
+            remainingJobs.set(0);
         } catch (RuntimeException e) {
-            pool.fail(e);
-        } catch (Error e) {
-            pool.fail(new IllegalStateException("Worker failed", e));
-            throw e;
+            failure = e;
+            remainingJobs.set(0);
+        } finally {
+            System.out.printf("[%s] Worker stopped%n", Thread.currentThread().getName());
         }
     }
 
@@ -45,50 +52,30 @@ final class Worker implements Runnable {
         if (!repository.claim(job)) {
             throw new DatabaseException("Cannot claim queued job " + job.getJobId());
         }
-        LogFormatter.job("INFO", job, "PROCESSING attempt " + job.getAttemptCount()
-                + "/" + job.getMaxAttempts());
+        log(job, "PROCESSING attempt " + job.getAttemptCount() + "/" + job.getMaxAttempts());
         try {
             job.execute();
+            job.complete();
         } catch (JobExecutionException e) {
             if (job.canRetry(e)) {
                 job.requeue(e.getMessage());
                 repository.update(job);
-                LogFormatter.job("WARN", job, "RETRY attempt " + job.getAttemptCount()
-                        + "/" + job.getMaxAttempts() + ": " + e.getMessage());
-                pool.requeue(job);
-            } else {
-                failJob(job, e.getMessage());
+                log(job, "RETRY: " + e.getMessage());
+                queue.put(job);
+                return;
             }
-            return;
+            job.fail(e.getMessage());
         } catch (InterruptedException e) {
-            pool.fail(new IllegalStateException("Execution interrupted", e));
-            try {
-                failJob(job, "Execution interrupted");
-            } catch (RuntimeException persistenceFailure) {
-                e.addSuppressed(persistenceFailure);
-            } finally {
-                Thread.currentThread().interrupt();
-            }
-            throw e;
-        } catch (RuntimeException e) {
-            pool.fail(e);
-            try {
-                failJob(job, "Unexpected execution failure: " + e.getMessage());
-            } catch (RuntimeException persistenceFailure) {
-                e.addSuppressed(persistenceFailure);
-            }
+            job.fail("Execution interrupted");
+            repository.update(job);
             throw e;
         }
-        job.complete();
         repository.update(job);
-        LogFormatter.job("INFO", job, "COMPLETED");
-        pool.jobFinished();
+        log(job, job.getStatus().name());
+        remainingJobs.decrementAndGet();
     }
 
-    private void failJob(Job job, String message) {
-        job.fail(message);
-        repository.update(job);
-        LogFormatter.job("WARN", job, "FAILED: " + message);
-        pool.jobFinished();
+    private static void log(Job job, String event) {
+        System.out.printf("[%s] %-12s %s%n", Thread.currentThread().getName(), job.getDisplayId(), event);
     }
 }

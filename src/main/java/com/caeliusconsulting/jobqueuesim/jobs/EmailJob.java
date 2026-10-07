@@ -1,4 +1,4 @@
-package com.caeliusconsulting.jobqueuesim.domain;
+package com.caeliusconsulting.jobqueuesim.jobs;
 
 public final class EmailJob extends Job {
     public EmailJob(String jobId, int maxAttempts) {

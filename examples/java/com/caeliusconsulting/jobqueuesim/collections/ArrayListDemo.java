@@ -1,8 +1,8 @@
 package com.caeliusconsulting.jobqueuesim.collections;
 
-import com.caeliusconsulting.jobqueuesim.domain.EmailJob;
-import com.caeliusconsulting.jobqueuesim.domain.Job;
-import com.caeliusconsulting.jobqueuesim.domain.ReportGenerationJob;
+import com.caeliusconsulting.jobqueuesim.jobs.EmailJob;
+import com.caeliusconsulting.jobqueuesim.jobs.Job;
+import com.caeliusconsulting.jobqueuesim.jobs.ReportGenerationJob;
 
 import java.util.ArrayList;
 import java.util.List;
