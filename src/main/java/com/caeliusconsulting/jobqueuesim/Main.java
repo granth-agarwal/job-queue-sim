@@ -7,17 +7,16 @@ import com.caeliusconsulting.jobqueuesim.jobs.Job;
 import com.caeliusconsulting.jobqueuesim.jobs.ReportGenerationJob;
 import com.caeliusconsulting.jobqueuesim.repository.JdbcJobRepository;
 import com.caeliusconsulting.jobqueuesim.repository.JobRepository;
+import com.caeliusconsulting.jobqueuesim.worker.ExecutionHistory;
 import com.caeliusconsulting.jobqueuesim.worker.Worker;
 
-import java.util.ArrayList;
+import java.util.LinkedList;
 import java.util.List;
+import java.util.Queue;
 import java.util.UUID;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public final class Main {
-    private static final int WORKER_COUNT = 3;
     private static final int MAX_ATTEMPTS = 3;
 
     private Main() { }
@@ -54,23 +53,28 @@ public final class Main {
                 new ReportGenerationJob(runId + "report-008", MAX_ATTEMPTS),
                 new DataSyncJob(runId + "sync-009", MAX_ATTEMPTS, 0));
 
-        BlockingQueue<Job> queue = new ArrayBlockingQueue<>(jobs.size(), true);
+        Queue<Job> queue = new LinkedList<>();
         AtomicInteger remainingJobs = new AtomicInteger(jobs.size());
-        List<Worker> workers = new ArrayList<>();
-        List<Thread> threads = new ArrayList<>();
+        ExecutionHistory history = new ExecutionHistory();
+        int workerCount = Math.min(Runtime.getRuntime().availableProcessors(), jobs.size());
+        List<Worker> workers = new LinkedList<>();
+        List<Thread> threads = new LinkedList<>();
         try {
-            for (int number = 1; number <= WORKER_COUNT; number++) {
-                Worker worker = new Worker(queue, repository, remainingJobs);
+            for (int number = 1; number <= workerCount; number++) {
+                Worker worker = new Worker(queue, repository, remainingJobs, history);
                 Thread thread = new Thread(worker, "worker-" + number);
                 workers.add(worker);
                 threads.add(thread);
                 thread.start();
             }
-            System.out.printf("[main] %d worker threads started%n", WORKER_COUNT);
+            System.out.printf("[main] %d worker threads started%n", workerCount);
             for (Job job : jobs) {
                 repository.create(job);
                 System.out.printf("[main] %-12s QUEUED [%s]%n", job.getDisplayId(), job.getType());
-                queue.put(job);
+                synchronized (queue) {
+                    queue.offer(job);
+                    queue.notifyAll();
+                }
             }
             for (Thread thread : threads) {
                 thread.join();
@@ -80,9 +84,12 @@ public final class Main {
                     throw new IllegalStateException("Job processing stopped", worker.getFailure());
                 }
             }
-            printSummary(repository, jobs);
+            printSummary(repository, jobs, workerCount, history);
         } finally {
-            remainingJobs.set(0);
+            synchronized (queue) {
+                remainingJobs.set(0);
+                queue.notifyAll();
+            }
             for (Thread thread : threads) {
                 if (thread.isAlive()) {
                     thread.interrupt();
@@ -96,7 +103,8 @@ public final class Main {
         System.out.println("[main] Job Queue Simulator finished");
     }
 
-    private static void printSummary(JobRepository repository, List<Job> jobs) {
+    private static void printSummary(JobRepository repository, List<Job> jobs,
+                                     int workerCount, ExecutionHistory history) {
         int completed = 0;
         int failed = 0;
         int attempts = 0;
@@ -109,7 +117,12 @@ public final class Main {
             attempts += job.getAttemptCount();
         }
         System.out.printf("%nEXECUTION SUMMARY%nSubmitted      : %d%nCompleted      : %d%n"
-                        + "Failed         : %d%nRetries        : %d%nTotal attempts : %d%nWorker threads : %d%n%n",
-                jobs.size(), completed, failed, attempts - jobs.size(), attempts, WORKER_COUNT);
+                        + "Failed         : %d%nRetries        : %d%nTotal attempts : %d%nWorker threads : %d%n",
+                jobs.size(), completed, failed, attempts - jobs.size(), attempts, workerCount);
+        System.out.println("Execution history:");
+        for (String event : history.snapshot()) {
+            System.out.println("  " + event);
+        }
+        System.out.println();
     }
 }

@@ -5,20 +5,22 @@ import com.caeliusconsulting.jobqueuesim.exceptions.JobExecutionException;
 import com.caeliusconsulting.jobqueuesim.jobs.Job;
 import com.caeliusconsulting.jobqueuesim.repository.JobRepository;
 
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.TimeUnit;
+import java.util.Queue;
 import java.util.concurrent.atomic.AtomicInteger;
 
 public final class Worker implements Runnable {
-    private final BlockingQueue<Job> queue;
+    private final Queue<Job> queue;
     private final JobRepository repository;
     private final AtomicInteger remainingJobs;
+    private final ExecutionHistory history;
     private RuntimeException failure;
 
-    public Worker(BlockingQueue<Job> queue, JobRepository repository, AtomicInteger remainingJobs) {
+    public Worker(Queue<Job> queue, JobRepository repository, AtomicInteger remainingJobs,
+                  ExecutionHistory history) {
         this.queue = queue;
         this.repository = repository;
         this.remainingJobs = remainingJobs;
+        this.history = history;
     }
 
     public RuntimeException getFailure() {
@@ -29,19 +31,26 @@ public final class Worker implements Runnable {
     public void run() {
         System.out.printf("[%s] Worker started%n", Thread.currentThread().getName());
         try {
-            while (remainingJobs.get() > 0 && !Thread.currentThread().isInterrupted()) {
-                Job job = queue.poll(100, TimeUnit.MILLISECONDS);
-                if (job != null) {
-                    process(job);
+            while (!Thread.currentThread().isInterrupted()) {
+                Job job;
+                synchronized (queue) {
+                    while (queue.isEmpty() && remainingJobs.get() > 0) {
+                        queue.wait();
+                    }
+                    if (remainingJobs.get() == 0) {
+                        break;
+                    }
+                    job = queue.poll();
                 }
+                process(job);
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             failure = new IllegalStateException("Worker interrupted", e);
-            remainingJobs.set(0);
+            stopWorkers();
         } catch (RuntimeException e) {
             failure = e;
-            remainingJobs.set(0);
+            stopWorkers();
         } finally {
             System.out.printf("[%s] Worker stopped%n", Thread.currentThread().getName());
         }
@@ -61,7 +70,10 @@ public final class Worker implements Runnable {
                 job.requeue(e.getMessage());
                 repository.update(job);
                 log(job, "RETRY: " + e.getMessage());
-                queue.put(job);
+                synchronized (queue) {
+                    queue.offer(job);
+                    queue.notifyAll();
+                }
                 return;
             }
             job.fail(e.getMessage());
@@ -72,10 +84,22 @@ public final class Worker implements Runnable {
         }
         repository.update(job);
         log(job, job.getStatus().name());
-        remainingJobs.decrementAndGet();
+        synchronized (queue) {
+            if (remainingJobs.get() > 0 && remainingJobs.decrementAndGet() == 0) {
+                queue.notifyAll();
+            }
+        }
     }
 
-    private static void log(Job job, String event) {
+    private void stopWorkers() {
+        synchronized (queue) {
+            remainingJobs.set(0);
+            queue.notifyAll();
+        }
+    }
+
+    private void log(Job job, String event) {
         System.out.printf("[%s] %-12s %s%n", Thread.currentThread().getName(), job.getDisplayId(), event);
+        history.record(Thread.currentThread().getName() + " " + job.getDisplayId() + " " + event);
     }
 }
