@@ -10,7 +10,8 @@ import com.caeliusconsulting.jobqueuesim.repository.JobRepository;
 import com.caeliusconsulting.jobqueuesim.worker.ExecutionHistory;
 import com.caeliusconsulting.jobqueuesim.worker.Worker;
 
-import java.util.LinkedList;
+import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Queue;
 import java.util.UUID;
@@ -53,12 +54,12 @@ public final class Main {
                 new ReportGenerationJob(runId + "report-008", MAX_ATTEMPTS),
                 new DataSyncJob(runId + "sync-009", MAX_ATTEMPTS, 0));
 
-        Queue<Job> queue = new LinkedList<>();
+        Queue<Job> queue = new ArrayDeque<>();
         AtomicInteger remainingJobs = new AtomicInteger(jobs.size());
         ExecutionHistory history = new ExecutionHistory();
         int workerCount = Math.min(Runtime.getRuntime().availableProcessors(), jobs.size());
-        List<Worker> workers = new LinkedList<>();
-        List<Thread> threads = new LinkedList<>();
+        List<Worker> workers = new ArrayList<>();
+        List<Thread> threads = new ArrayList<>();
         try {
             for (int number = 1; number <= workerCount; number++) {
                 Worker worker = new Worker(queue, repository, remainingJobs, history);

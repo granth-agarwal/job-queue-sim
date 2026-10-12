@@ -1,12 +1,13 @@
 package com.caeliusconsulting.jobqueuesim.worker;
 
-import java.util.LinkedList;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 public final class ExecutionHistory {
     private final Lock lock = new ReentrantLock();
-    private final LinkedList<String> events = new LinkedList<>();
+    private final List<String> events = new ArrayList<>();
 
     public void record(String event) {
         lock.lock();
@@ -17,10 +18,10 @@ public final class ExecutionHistory {
         }
     }
 
-    public LinkedList<String> snapshot() {
+    public List<String> snapshot() {
         lock.lock();
         try {
-            return new LinkedList<>(events);
+            return new ArrayList<>(events);
         } finally {
             lock.unlock();
         }
